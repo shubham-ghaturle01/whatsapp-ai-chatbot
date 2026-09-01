@@ -75,6 +75,7 @@ import axios from 'axios';
 @Injectable()
 export class WhatsappService {
   private readonly logger = new Logger(WhatsappService.name);
+  private readonly maxTextLength = 4096;
 
   constructor(private readonly configService: ConfigService) {}
 
@@ -163,30 +164,62 @@ export class WhatsappService {
 
     try {
 
-      const response = await axios.post(
-        url,
-        {
-          messaging_product: 'whatsapp',
-          recipient_type: 'individual',
-          to: to,
-          type: 'text',
-          text: {
-            preview_url: false,
-            body: text,
+      const chunks = this.splitText(text);
+      const responses: unknown[] = [];
+      for (const chunk of chunks) {
+        const response = await axios.post(
+          url,
+          {
+            messaging_product: 'whatsapp',
+            recipient_type: 'individual',
+            to,
+            type: 'text',
+            text: {
+              preview_url: false,
+              body: chunk,
+            },
           },
-        },
-        {
-          headers,
-        },
-      );
+          { headers },
+        );
+        responses.push(response.data);
+      }
 
-      this.logger.log(`SEND MESSAGE RESPONSE: ${JSON.stringify(response.data)}`);
-      return response.data;
+      this.logger.log(`SEND MESSAGE RESPONSE: ${JSON.stringify(responses)}`);
+      return responses.length === 1 ? responses[0] : responses;
 
     } catch (error: any) {
 
       this.logApiError('SEND MESSAGE', error);
       throw error;
     }
+  }
+
+  private splitText(text: string): string[] {
+    if (text.length <= this.maxTextLength) {
+      return [text];
+    }
+
+    const chunks: string[] = [];
+    for (let index = 0; index < text.length; index += this.maxTextLength) {
+      chunks.push(text.slice(index, index + this.maxTextLength));
+    }
+    return chunks;
+  }
+
+  async downloadMedia(mediaId: string): Promise<{ data: Buffer; mimeType?: string }> {
+    const { headers } = this.apiConfig;
+    const metadataResponse = await axios.get(
+      `https://graph.facebook.com/${this.apiConfig.graphApiVersion}/${mediaId}`,
+      { headers },
+    );
+    const mediaResponse = await axios.get<ArrayBuffer>(metadataResponse.data.url, {
+      headers,
+      responseType: 'arraybuffer',
+    });
+
+    return {
+      data: Buffer.from(mediaResponse.data),
+      mimeType: metadataResponse.data.mime_type,
+    };
   }
 }

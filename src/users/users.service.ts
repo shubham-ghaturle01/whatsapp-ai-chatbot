@@ -16,7 +16,7 @@ export class UsersService {
 		return this.userModel.findOneAndUpdate(
 			{ phoneNumber },
 			{ $set: update, $setOnInsert: { phoneNumber } },
-			{ new: true, upsert: true, setDefaultsOnInsert: true },
+			{ returnDocument: 'after', upsert: true, setDefaultsOnInsert: true },
 		).exec();
 	}
 }

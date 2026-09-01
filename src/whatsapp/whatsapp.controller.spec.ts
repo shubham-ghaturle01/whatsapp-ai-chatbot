@@ -5,6 +5,7 @@ import { ConversationsService } from '../conversations/conversations.service';
 import { UsersService } from '../users/users.service';
 import { WhatsappController } from './whatsapp.controller';
 import { WhatsappService } from './whatsapp.service';
+import { DocumentService } from './document.service';
 
 describe('WhatsappController', () => {
   let controller: WhatsappController;
@@ -21,6 +22,9 @@ describe('WhatsappController', () => {
   const conversationsService = {
     addMessage: jest.fn(),
     getRecentMessages: jest.fn<() => Promise<unknown[]>>(),
+  };
+  const documentService = {
+    extractText: jest.fn<() => Promise<string>>(),
   };
 
   beforeEach(async () => {
@@ -42,6 +46,10 @@ describe('WhatsappController', () => {
         {
           provide: ConversationsService,
           useValue: conversationsService,
+        },
+        {
+          provide: DocumentService,
+          useValue: documentService,
         },
       ],
     }).compile();

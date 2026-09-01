@@ -14,6 +14,7 @@ import { AiService } from '../ai/ai.service';
 import { ConversationsService } from '../conversations/conversations.service';
 import { UsersService } from '../users/users.service';
 import { WhatsappService } from './whatsapp.service';
+import { DocumentService } from './document.service';
 
 @Controller('whatsapp')
 export class WhatsappController {
@@ -22,6 +23,7 @@ export class WhatsappController {
     private readonly whatsappService: WhatsappService,
     private readonly usersService: UsersService,
     private readonly conversationsService: ConversationsService,
+    private readonly documentService: DocumentService,
   ) {}
 
   // ================================
@@ -72,24 +74,54 @@ export class WhatsappController {
     const from = message.from;
     const messageId = message.id;
     const text = message.text?.body?.trim();
+    const isDocument = message.type === 'document';
     const contactName = value?.contacts?.[0]?.profile?.name;
     console.log('FROM:', from);
     console.log('MESSAGE ID:', messageId);
     console.log('TEXT:', text);
 
-    if (message.type !== 'text' || !from || !messageId || !text) {
+    if (!from || !messageId || (!text && !isDocument)) {
       console.log('Non-text or incomplete message ignored');
       return { status: 'EVENT_RECEIVED' };
     }
 
-    console.log('INCOMING WHATSAPP TEXT:', text);
+    let userMessage = text;
+    if (isDocument) {
+      const document = message.document;
+      if (!document?.id) {
+        console.log('Document has no media ID; event acknowledged');
+        return { status: 'EVENT_RECEIVED' };
+      }
+      try {
+        console.log('DOCUMENT DOWNLOAD START:', document.filename);
+        const media = await this.whatsappService.downloadMedia(document.id);
+        userMessage = await this.documentService.extractText(
+          media.data,
+          media.mimeType || document.mime_type,
+          document.filename,
+        );
+        if (!userMessage) {
+          throw new Error('No readable text found in document');
+        }
+        console.log('DOCUMENT EXTRACTED:', document.filename);
+      } catch (error) {
+        console.error('DOCUMENT PROCESSING FAILED:', error);
+        await this.whatsappService.sendText(
+          from,
+          'I could not read that document. Please send a PDF, DOCX, XLSX, CSV, or text file.',
+        );
+        return { status: 'EVENT_RECEIVED' };
+      }
+    }
+
+    console.log('INCOMING WHATSAPP TEXT:', userMessage);
 
     let userId;
     let conversationContext = '';
     try {
       const user = await this.usersService.findOrCreate(from, contactName);
       userId = user._id;
-      await this.conversationsService.addMessage(userId, 'user', text);
+      await this.conversationsService.addMessage(userId, 'user', userMessage);
       const history = await this.conversationsService.getRecentMessages(userId);
       conversationContext = history
         .map((item) => `${item.role}: ${item.message}`)
@@ -106,9 +138,11 @@ export class WhatsappController {
     }
 
     try {
-      const prompt = conversationContext
-        ? `Conversation history:\n${conversationContext}\n\nUser's latest message: ${text}`
-        : text;
+      const prompt = isDocument
+        ? `A document was uploaded by the user. Read its extracted text below. Give a concise summary and be ready to answer future questions from it.\n\nDocument text:\n${userMessage}`
+        : conversationContext
+          ? `Conversation history:\n${conversationContext}\n\nUser's latest message: ${userMessage}`
+          : userMessage;
       const aiResponse = await this.aiService.askQuestion(prompt);
       await this.whatsappService.sendText(from, aiResponse);
       if (userId) {

@@ -6,10 +6,11 @@ import { WhatsappService } from './whatsapp.service';
 import { AiModule } from '../ai/ai.module';
 import { UsersModule } from '../users/users.module';
 import { ConversationsModule } from '../conversations/conversations.module';
+import { DocumentService } from './document.service';
 
 @Module({
   imports: [HttpModule, AiModule, UsersModule, ConversationsModule],
   controllers: [WhatsappController],
-  providers: [WhatsappService]
+  providers: [WhatsappService, DocumentService]
 })
 export class WhatsappModule {}
