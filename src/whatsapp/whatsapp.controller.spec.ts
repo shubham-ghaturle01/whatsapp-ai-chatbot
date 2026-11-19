@@ -14,7 +14,9 @@ describe('WhatsappController', () => {
     sendText: jest.fn<(to: string, text: string) => Promise<unknown>>(),
   };
   const aiService = {
-    askQuestion: jest.fn<(question: string) => Promise<string>>(),
+    askQuestion: jest.fn<(question: string, options?: any) => Promise<string>>(),
+    indexDocument: jest.fn<() => Promise<{ status: string; count: number }>>(),
+    searchRelevantDocuments: jest.fn<(query: string, topK?: number) => Promise<string[]>>(),
   };
   const usersService = {
     findOrCreate: jest.fn<() => Promise<{ _id: string }>>(),
@@ -64,6 +66,7 @@ describe('WhatsappController', () => {
   it('sends a reply even when marking the message as read fails', async () => {
     whatsappService.markAsRead.mockRejectedValueOnce(new Error('read failed'));
     aiService.askQuestion.mockResolvedValueOnce('GST is a goods and services tax.');
+    aiService.searchRelevantDocuments.mockResolvedValueOnce([]);
     usersService.findOrCreate.mockResolvedValueOnce({ _id: 'user-id' });
     conversationsService.getRecentMessages.mockResolvedValueOnce([]);
 
@@ -89,7 +92,10 @@ describe('WhatsappController', () => {
     });
 
     expect(whatsappService.markAsRead).toHaveBeenCalledWith('wamid.test');
-    expect(aiService.askQuestion).toHaveBeenCalledWith('hello');
+    expect(aiService.askQuestion).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ context: undefined, documents: [] }),
+    );
     expect(whatsappService.sendText).toHaveBeenCalledWith(
       '919730327322',
       'GST is a goods and services tax.',

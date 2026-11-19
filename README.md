@@ -31,6 +31,12 @@
 $ npm install
 ```
 
+## Configure Gemini
+
+Set `GEMINI_API_KEY` in `.env`, then set `AI_PROVIDER=gemini`. The default model is
+`gemini-flash-lite-latest`; override it with `GEMINI_MODEL` if needed. Keep API keys out
+of source control and logs.
+
 ## Compile and run the project
 
 ```bash

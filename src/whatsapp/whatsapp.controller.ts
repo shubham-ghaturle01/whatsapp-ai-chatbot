@@ -60,7 +60,7 @@ export class WhatsappController {
 
   @Post('webhook')
   @HttpCode(200)
-  async receiveMessage(@Body() body: any) {
+  async receiveMessage(@Body() body: any, @Res() res?: Response) {
     console.log('WEBHOOK RECEIVED');
 
     const value = body?.entry?.[0]?.changes?.[0]?.value;
@@ -83,6 +83,11 @@ export class WhatsappController {
     if (!from || !messageId || (!text && !isDocument)) {
       console.log('Non-text or incomplete message ignored');
       return { status: 'EVENT_RECEIVED' };
+    }
+
+    // Acknowledge Meta immediately; document parsing and AI work can take longer.
+    if (res) {
+      res.status(200).json({ status: 'EVENT_RECEIVED' });
     }
 
     let userMessage = text;
@@ -138,19 +143,44 @@ export class WhatsappController {
     }
 
     try {
+      if (isDocument) {
+        await this.aiService.indexDocument(userMessage, {
+          from,
+          messageId,
+          source: 'whatsapp-document',
+        });
+      }
+
+      const relevantDocuments = await this.aiService.searchRelevantDocuments(
+        userMessage,
+        3,
+      );
+
       const prompt = isDocument
         ? `A document was uploaded by the user. Read its extracted text below. Give a concise summary and be ready to answer future questions from it.\n\nDocument text:\n${userMessage}`
-        : conversationContext
-          ? `Conversation history:\n${conversationContext}\n\nUser's latest message: ${userMessage}`
-          : userMessage;
-      const aiResponse = await this.aiService.askQuestion(prompt);
+        : userMessage;
+
+      const aiResponse = await this.aiService.askQuestion(prompt, {
+        context: conversationContext || undefined,
+        documents: relevantDocuments,
+      });
+
       await this.whatsappService.sendText(from, aiResponse);
       if (userId) {
         await this.conversationsService.addMessage(userId, 'assistant', aiResponse);
       }
       console.log('SEND MESSAGE COMPLETE');
     } catch (error) {
-      console.error('SEND MESSAGE FAILED');
+      console.error('SEND MESSAGE FAILED', error);
+
+      const fallbackMessage =
+        'I am temporarily unable to answer right now. Please try again in a few minutes.';
+
+      try {
+        await this.whatsappService.sendText(from, fallbackMessage);
+      } catch (fallbackError) {
+        console.error('FALLBACK MESSAGE FAILED', fallbackError);
+      }
     }
 
     return { status: 'EVENT_RECEIVED' };

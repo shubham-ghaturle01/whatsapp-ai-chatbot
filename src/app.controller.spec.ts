@@ -15,8 +15,17 @@ describe('AppController', () => {
   });
 
   describe('root', () => {
-    it('should return "Hello World!"', () => {
-      expect(appController.getHello()).toBe('Hello World!');
+    it('should return the admin dashboard HTML', () => {
+      const res = {
+        send: jest.fn(),
+      } as any;
+
+      appController.getHello(res);
+
+      expect(res.send).toHaveBeenCalled();
+      const html = res.send.mock.calls[0][0];
+      expect(html).toContain('WhatsApp AI Admin');
+      expect(html).toContain('Provider');
     });
   });
 });
