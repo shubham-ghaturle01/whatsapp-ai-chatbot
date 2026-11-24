@@ -290,10 +290,125 @@ export class AppController {
             padding: 10px;
             background: var(--card-2);
           }
+          [hidden] { display: none !important; }
+          .auth-shell {
+            max-width: 480px;
+            margin: 8vh auto;
+          }
+          .auth-brand {
+            margin: 0 0 8px;
+            font-size: 1.8rem;
+          }
+          .auth-copy {
+            margin: 0 0 24px;
+            color: var(--muted);
+            line-height: 1.5;
+          }
+          .auth-tabs {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            padding: 5px;
+            margin-bottom: 20px;
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            background: var(--card-2);
+          }
+          .auth-tabs button {
+            background: transparent;
+            color: var(--muted);
+          }
+          .auth-tabs button.active {
+            color: white;
+            background: #1d4ed8;
+          }
+          .auth-form { display: grid; gap: 14px; }
+          .auth-field { display: grid; gap: 7px; }
+          .auth-field label {
+            color: #d1d5db;
+            font-size: 13px;
+            font-weight: bold;
+          }
+          .auth-field input { width: 100%; }
+          .auth-submit { width: 100%; margin-top: 4px; }
+          .auth-message {
+            min-height: 20px;
+            margin: 14px 0 0;
+            color: #fca5a5;
+            font-size: 14px;
+            line-height: 1.5;
+          }
+          .auth-message.success { color: #6ee7b7; }
+          .auth-help {
+            margin: 14px 0 0;
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.5;
+          }
+          .account-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+            flex-wrap: wrap;
+            margin-bottom: 16px;
+          }
+          .account-details { color: var(--muted); font-size: 13px; }
+          .account-details strong { color: var(--text); }
+          @media (max-width: 520px) {
+            body { padding: 24px 14px; }
+            .auth-shell { margin: 4vh auto; }
+          }
         </style>
       </head>
       <body>
         <div class="container">
+          <section id="authSection" class="auth-shell card" aria-labelledby="authTitle">
+            <h1 id="authTitle" class="auth-brand">WhatsApp AI Studio</h1>
+            <p class="auth-copy">Sign in to manage your business assistant, or create a business workspace to get started.</p>
+            <div class="auth-tabs" role="tablist" aria-label="Account access">
+              <button id="loginTab" class="active" type="button" role="tab" aria-selected="true">Sign in</button>
+              <button id="registerTab" type="button" role="tab" aria-selected="false">Create account</button>
+            </div>
+            <form id="loginForm" class="auth-form">
+              <div class="auth-field">
+                <label for="loginEmail">Email</label>
+                <input id="loginEmail" name="email" type="email" autocomplete="email" required maxlength="254" />
+              </div>
+              <div class="auth-field">
+                <label for="loginPassword">Password</label>
+                <input id="loginPassword" name="password" type="password" autocomplete="current-password" required minlength="8" maxlength="72" />
+              </div>
+              <button class="auth-submit" type="submit">Sign in</button>
+            </form>
+            <form id="registerForm" class="auth-form" hidden>
+              <div class="auth-field">
+                <label for="businessName">Business name</label>
+                <input id="businessName" name="businessName" type="text" autocomplete="organization" required minlength="2" maxlength="120" />
+              </div>
+              <div class="auth-field">
+                <label for="ownerName">Your name</label>
+                <input id="ownerName" name="ownerName" type="text" autocomplete="name" required minlength="2" maxlength="120" />
+              </div>
+              <div class="auth-field">
+                <label for="registerEmail">Email</label>
+                <input id="registerEmail" name="email" type="email" autocomplete="email" required maxlength="254" />
+              </div>
+              <div class="auth-field">
+                <label for="registerPassword">Password</label>
+                <input id="registerPassword" name="password" type="password" autocomplete="new-password" required minlength="8" maxlength="72" />
+              </div>
+              <button class="auth-submit" type="submit">Create business account</button>
+            </form>
+            <p id="authMessage" class="auth-message" role="status" aria-live="polite"></p>
+            <p class="auth-help">Your password is securely hashed. Business accounts are assigned to a separate tenant workspace.</p>
+          </section>
+
+          <div id="dashboard" hidden>
+          <div class="account-bar card">
+            <div class="account-details" id="accountDetails"></div>
+            <button id="logoutBtn" class="secondary" type="button">Sign out</button>
+          </div>
           <div class="header">
             <h1>WhatsApp AI Admin</h1>
             <div class="status-pill" id="providerBadge">Loading...</div>
@@ -360,6 +475,7 @@ export class AppController {
             <div class="label">System status</div>
             <pre id="statusBox">Loading...</pre>
           </div>
+          </div>
         </div>
 
         <div id="detailsModal" class="modal">
@@ -374,6 +490,133 @@ export class AppController {
         </div>
 
         <script>
+          let accessToken = sessionStorage.getItem('accessToken');
+
+          function setAuthMessage(message, success = false) {
+            const element = document.getElementById('authMessage');
+            element.textContent = message;
+            element.classList.toggle('success', success);
+          }
+
+          function setAuthMode(mode) {
+            const isLogin = mode === 'login';
+            document.getElementById('loginForm').hidden = !isLogin;
+            document.getElementById('registerForm').hidden = isLogin;
+            document.getElementById('loginTab').classList.toggle('active', isLogin);
+            document.getElementById('registerTab').classList.toggle('active', !isLogin);
+            document.getElementById('loginTab').setAttribute('aria-selected', String(isLogin));
+            document.getElementById('registerTab').setAttribute('aria-selected', String(!isLogin));
+            document.getElementById('authTitle').textContent = isLogin
+              ? 'Welcome back'
+              : 'Create your workspace';
+            setAuthMessage('');
+          }
+
+          function showLogin(message) {
+            accessToken = null;
+            sessionStorage.removeItem('accessToken');
+            document.getElementById('dashboard').hidden = true;
+            document.getElementById('authSection').hidden = false;
+            setAuthMode('login');
+            if (message) setAuthMessage(message);
+          }
+
+          function showDashboard(user) {
+            document.getElementById('authSection').hidden = true;
+            document.getElementById('dashboard').hidden = false;
+            const accountDetails = document.getElementById('accountDetails');
+            accountDetails.textContent = '';
+            const name = document.createElement('strong');
+            name.textContent = user.name || user.email;
+            const details = document.createElement('span');
+            details.textContent = ' · ' + user.email + ' · ' + user.role + ' · ' + user.tenantId;
+            accountDetails.append(name, details);
+            loadStatus().catch((error) => {
+              document.getElementById('statusBox').textContent =
+                error.message || 'Could not load dashboard status.';
+            });
+          }
+
+          function apiFetch(url, options = {}) {
+            const headers = new Headers(options.headers || {});
+            if (accessToken) headers.set('Authorization', 'Bearer ' + accessToken);
+            return fetch(url, { ...options, headers }).then((response) => {
+              if (response.status === 401) {
+                showLogin('Your session expired. Please sign in again.');
+              }
+              return response;
+            });
+          }
+
+          async function readApiMessage(response) {
+            const data = await response.json().catch(() => ({}));
+            const message = data.message;
+            return Array.isArray(message) ? message.join(' ') : message;
+          }
+
+          async function submitAuthForm(event, mode) {
+            event.preventDefault();
+            const form = event.currentTarget;
+            const submitButton = form.querySelector('button[type="submit"]');
+            submitButton.disabled = true;
+            setAuthMessage(mode === 'login' ? 'Signing in…' : 'Creating your account…');
+
+            const formData = new FormData(form);
+            const payload = Object.fromEntries(formData.entries());
+            try {
+              const response = await fetch('/auth/' + mode, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+              });
+              if (!response.ok) {
+                const message = await readApiMessage(response);
+                throw new Error(message || 'Request failed. Please try again.');
+              }
+
+              const data = await response.json();
+              accessToken = data.accessToken;
+              sessionStorage.setItem('accessToken', accessToken);
+              const profileResponse = await fetch('/auth/me', {
+                headers: { Authorization: 'Bearer ' + accessToken }
+              });
+              if (!profileResponse.ok) {
+                const message = await readApiMessage(profileResponse);
+                throw new Error(message || 'Could not verify your account.');
+              }
+              const profile = await profileResponse.json();
+              form.reset();
+              showDashboard(profile.user);
+            } catch (error) {
+              showLogin(error.message || 'Could not complete the request.');
+            } finally {
+              submitButton.disabled = false;
+            }
+          }
+
+          async function restoreSession() {
+            if (!accessToken) return;
+            try {
+              const response = await fetch('/auth/me', {
+                headers: { Authorization: 'Bearer ' + accessToken }
+              });
+              if (!response.ok) {
+                showLogin('Please sign in to continue.');
+                return;
+              }
+              const profile = await response.json();
+              showDashboard(profile.user);
+            } catch {
+              showLogin('Could not verify your session. Please sign in again.');
+            }
+          }
+
+          document.getElementById('loginTab').addEventListener('click', () => setAuthMode('login'));
+          document.getElementById('registerTab').addEventListener('click', () => setAuthMode('register'));
+          document.getElementById('loginForm').addEventListener('submit', (event) => submitAuthForm(event, 'login'));
+          document.getElementById('registerForm').addEventListener('submit', (event) => submitAuthForm(event, 'register'));
+          document.getElementById('logoutBtn').addEventListener('click', () => showLogin('You have signed out.'));
+
           function openDetailsModal(doc) {
             const body = document.getElementById('detailsBody');
             const metadata = document.getElementById('detailsMetadata');
@@ -397,7 +640,8 @@ export class AppController {
           }
 
           async function loadStatus() {
-            const res = await fetch('/ai/status');
+            const res = await apiFetch('/ai/status');
+            if (!res.ok) throw new Error(await readApiMessage(res) || 'Could not load dashboard status.');
             const data = await res.json();
             const provider = data.provider || 'local';
             const localHealthy = data.localServiceHealthy === true ? 'Healthy' : 'Offline';
@@ -410,7 +654,8 @@ export class AppController {
             document.getElementById('localMetric').textContent = localHealthy;
             document.getElementById('statusBox').textContent = JSON.stringify(data, null, 2);
 
-            const docRes = await fetch('/ai/documents');
+            const docRes = await apiFetch('/ai/documents');
+            if (!docRes.ok) throw new Error(await readApiMessage(docRes) || 'Could not load documents.');
             const docData = await docRes.json();
             const docs = docData.documents || [];
             const list = document.getElementById('documentsList');
@@ -436,7 +681,7 @@ export class AppController {
                   return;
                 }
 
-                const res = await fetch('/ai/documents/' + encodeURIComponent(docId), {
+                const res = await apiFetch('/ai/documents/' + encodeURIComponent(docId), {
                   method: 'DELETE',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ id: docId })
@@ -457,7 +702,7 @@ export class AppController {
               return;
             }
 
-            const res = await fetch('/ai/documents/query', {
+            const res = await apiFetch('/ai/documents/query', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ query })
@@ -508,7 +753,7 @@ export class AppController {
             const reader = new FileReader();
             reader.onload = async (event) => {
               const base64Data = event.target.result.split(',')[1];
-              const res = await fetch('/ai/documents', {
+              const res = await apiFetch('/ai/documents', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -535,7 +780,7 @@ export class AppController {
 
           document.getElementById('saveBtn').addEventListener('click', async () => {
             const provider = document.getElementById('providerSelect').value;
-            const res = await fetch('/ai/provider', {
+            const res = await apiFetch('/ai/provider', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ provider })
@@ -548,7 +793,7 @@ export class AppController {
           document.getElementById('refreshBtn').addEventListener('click', loadStatus);
 
           document.getElementById('clearBtn').addEventListener('click', async () => {
-            const res = await fetch('/ai/documents', { method: 'DELETE' });
+            const res = await apiFetch('/ai/documents', { method: 'DELETE' });
             const data = await res.json();
             await loadStatus();
             alert(data.status === 'cleared' ? 'Document index cleared.' : 'Could not clear index.');
@@ -568,7 +813,7 @@ export class AppController {
             }
           });
 
-          loadStatus();
+          restoreSession();
         </script>
       </body>
       </html>

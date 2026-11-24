@@ -6,7 +6,7 @@ from uuid import uuid4
 import base64
 import io
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from pydantic import BaseModel, Field
 import numpy as np
 
@@ -41,6 +41,7 @@ class DocumentRequest(BaseModel):
 class QueryRequest(BaseModel):
     query: str = Field(..., min_length=1)
     top_k: int = 3
+    tenant_id: Optional[str] = None
 
 VECTOR_DB: List[Dict[str, Any]] = []
 MIN_RELEVANCE_SCORE = 0.12
@@ -246,6 +247,10 @@ def query_documents(payload: QueryRequest):
     query_vector = build_embedding(payload.query)
     ranked = []
     for item in VECTOR_DB:
+        if payload.tenant_id:
+            item_tenant_id = item.get('metadata', {}).get('tenantId')
+            if item_tenant_id != payload.tenant_id:
+                continue
         document_vector = build_embedding(item['text'])
         item['embedding'] = document_vector.tolist()
         vector_score = cosine_similarity(document_vector, query_vector)
@@ -270,8 +275,15 @@ def list_documents():
 
 
 @app.delete('/documents')
-def clear_documents():
-    VECTOR_DB.clear()
+def clear_documents(tenant_id: Optional[str] = Query(default=None)):
+    if tenant_id:
+        VECTOR_DB[:] = [
+            doc
+            for doc in VECTOR_DB
+            if doc.get('metadata', {}).get('tenantId') != tenant_id
+        ]
+    else:
+        VECTOR_DB.clear()
     return {'status': 'cleared', 'count': len(VECTOR_DB)}
 
 

@@ -7,9 +7,17 @@ export type UserDocument = HydratedDocument<User>;
   timestamps: true,
 })
 export class User {
+  createdAt!: Date;
+  updatedAt!: Date;
+
   @Prop({
     required: true,
-    unique: true,
+    index: true,
+  })
+  tenantId!: string;
+
+  @Prop({
+    required: true,
     index: true,
   })
   phoneNumber!: string;
@@ -19,3 +27,4 @@ export class User {
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
+UserSchema.index({ tenantId: 1, phoneNumber: 1 }, { unique: true });

@@ -6,6 +6,7 @@ import { UsersService } from '../users/users.service';
 import { WhatsappController } from './whatsapp.controller';
 import { WhatsappService } from './whatsapp.service';
 import { DocumentService } from './document.service';
+import { TenantsService } from '../tenants/tenants.service';
 
 describe('WhatsappController', () => {
   let controller: WhatsappController;
@@ -27,6 +28,12 @@ describe('WhatsappController', () => {
   };
   const documentService = {
     extractText: jest.fn<() => Promise<string>>(),
+  };
+  const tenantsService = {
+    resolveByPhoneNumberId: jest.fn().mockResolvedValue({
+      tenantId: 'tenant-test',
+    }),
+    ensureDefaultTenant: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -53,6 +60,10 @@ describe('WhatsappController', () => {
           provide: DocumentService,
           useValue: documentService,
         },
+        {
+          provide: TenantsService,
+          useValue: tenantsService,
+        },
       ],
     }).compile();
 
@@ -76,6 +87,9 @@ describe('WhatsappController', () => {
           changes: [
             {
               value: {
+                metadata: {
+                  phone_number_id: '1249257764942206',
+                },
                 messages: [
                   {
                     from: '919730327322',

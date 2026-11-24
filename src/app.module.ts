@@ -10,6 +10,8 @@ import { AiModule } from './ai/ai.module';
 import { ConversationsModule } from './conversations/conversations.module';
 import { UsersModule } from './users/users.module';
 import { HealthModule } from './health/health.module';
+import { TenantsModule } from './tenants/tenants.module';
+import { AuthModule } from './auth/auth.module';
 
 import { validateConfiguration } from './config/validation';
 
@@ -21,15 +23,15 @@ import { validateConfiguration } from './config/validation';
       validate: validateConfiguration,
     }),
 
-    MongooseModule.forRoot(
-      process.env.MONGODB_URI!,
-    ),
+    MongooseModule.forRoot(process.env.MONGODB_URI!),
 
     WhatsappModule,
     AiModule,
     ConversationsModule,
     UsersModule,
     HealthModule,
+    TenantsModule,
+    AuthModule,
   ],
 
   controllers: [AppController],

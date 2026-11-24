@@ -10,12 +10,16 @@ export class UsersService {
 		private readonly userModel: Model<UserDocument>,
 	) {}
 
-	async findOrCreate(phoneNumber: string, name?: string): Promise<UserDocument> {
+	async findOrCreate(
+		tenantId: string,
+		phoneNumber: string,
+		name?: string,
+	): Promise<UserDocument> {
 		const update = name ? { name } : {};
 
 		return this.userModel.findOneAndUpdate(
-			{ phoneNumber },
-			{ $set: update, $setOnInsert: { phoneNumber } },
+			{ tenantId, phoneNumber },
+			{ $set: update, $setOnInsert: { tenantId, phoneNumber } },
 			{ returnDocument: 'after', upsert: true, setDefaultsOnInsert: true },
 		).exec();
 	}

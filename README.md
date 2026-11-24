@@ -31,11 +31,47 @@
 $ npm install
 ```
 
+## SaaS frontend preview
+
+The Next.js workspace UI is in `frontend/`; it runs separately from the NestJS API:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open `http://localhost:3000`. The app shell includes overview, inbox, AI assistants,
+knowledge base, workflows, integrations, analytics, and workspace settings. It is
+currently a UI preview with sample content; actions that need unfinished backend
+modules are identified as not connected rather than reporting false success.
+
 ## Configure Gemini
 
 Set `GEMINI_API_KEY` in `.env`, then set `AI_PROVIDER=gemini`. The default model is
 `gemini-flash-lite-latest`; override it with `GEMINI_MODEL` if needed. Keep API keys out
 of source control and logs.
+
+## Authentication API
+
+Set a strong, unique `JWT_SECRET` in `.env` before using authentication. Generate one
+with `openssl rand -base64 48`; do not commit the generated secret. The application
+returns a clear configuration error from auth endpoints if it is missing.
+
+Open the application root (`http://localhost:<PORT>/`) for the sign-in and
+registration panel. It stores the bearer token for the current browser session and
+shows the existing AI admin dashboard after `/auth/me` verifies the account.
+
+- `POST /auth/register` creates a business tenant and its `BUSINESS_ADMIN` account.
+  Body: `{ "businessName": "...", "ownerName": "...", "email": "...", "password": "..." }`
+- `POST /auth/login` accepts `{ "email": "...", "password": "..." }` and returns a
+  one-hour bearer token.
+- `GET /auth/me` requires `Authorization: Bearer <accessToken>`.
+
+Passwords are hashed with bcrypt. Protected requests reload the account and tenant
+status, so removed accounts and suspended tenants cannot continue using existing
+tokens. Public registration only creates business administrators; it cannot assign
+platform administrator roles.
 
 ## Compile and run the project
 

@@ -8,6 +8,15 @@ export type ConversationDocument =
   timestamps: true,
 })
 export class Conversation {
+  createdAt!: Date;
+  updatedAt!: Date;
+
+  @Prop({
+    required: true,
+    index: true,
+  })
+  tenantId!: string;
+
   @Prop({
     type: Types.ObjectId,
     ref: 'User',
@@ -30,3 +39,4 @@ export class Conversation {
 
 export const ConversationSchema =
   SchemaFactory.createForClass(Conversation);
+ConversationSchema.index({ tenantId: 1, userId: 1, createdAt: -1 });

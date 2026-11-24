@@ -156,8 +156,8 @@ export class AiService {
     }
   }
 
-  async listDocuments(): Promise<
-    Array<{ text: string; metadata: Record<string, any> }>
+  async listDocuments(tenantId?: string): Promise<
+    Array<{ id?: string; text: string; metadata: Record<string, any> }>
   > {
     try {
       const response = await fetch(`${this.localBaseUrl}/documents`, {
@@ -169,16 +169,36 @@ export class AiService {
       }
 
       const payload = await response.json();
-      return Array.isArray(payload.documents) ? payload.documents : [];
+      const documents = Array.isArray(payload.documents)
+        ? payload.documents.map(
+            (document: {
+              id?: string;
+              text: string;
+              metadata: Record<string, any>;
+            }) => ({
+              id: document.id || document.metadata?.id,
+              text: document.text,
+              metadata: document.metadata || {},
+            }),
+          )
+        : [];
+      return tenantId
+        ? documents.filter(
+            (document) => document.metadata.tenantId === tenantId,
+          )
+        : documents;
     } catch (error) {
       console.error('Document listing error:', error);
       return [];
     }
   }
 
-  async clearDocuments(): Promise<{ status: string; count: number }> {
+  async clearDocuments(tenantId?: string): Promise<{ status: string; count: number }> {
     try {
-      const response = await fetch(`${this.localBaseUrl}/documents`, {
+      const query = tenantId
+        ? `?tenant_id=${encodeURIComponent(tenantId)}`
+        : '';
+      const response = await fetch(`${this.localBaseUrl}/documents${query}`, {
         method: 'DELETE',
       });
 
@@ -196,8 +216,16 @@ export class AiService {
 
   async deleteDocument(
     documentId: string,
+    tenantId?: string,
   ): Promise<{ status: string; count: number }> {
     try {
+      if (tenantId) {
+        const documents = await this.listDocuments(tenantId);
+        if (!documents.some((document) => document.id === documentId)) {
+          return { status: 'not-found', count: documents.length };
+        }
+      }
+
       const response = await fetch(
         `${this.localBaseUrl}/documents/${documentId}`,
         {
@@ -220,6 +248,7 @@ export class AiService {
   async queryDocuments(
     query: string,
     topK = 3,
+    tenantId?: string,
   ): Promise<
     Array<{ text: string; metadata: Record<string, any>; score: number }>
   > {
@@ -229,7 +258,11 @@ export class AiService {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ query, top_k: topK }),
+        body: JSON.stringify({
+          query,
+          top_k: topK,
+          tenant_id: tenantId || undefined,
+        }),
       });
 
       if (!response.ok) {
@@ -244,8 +277,12 @@ export class AiService {
     }
   }
 
-  async searchRelevantDocuments(query: string, topK = 3): Promise<string[]> {
-    const results = await this.queryDocuments(query, topK);
+  async searchRelevantDocuments(
+    query: string,
+    topK = 3,
+    tenantId?: string,
+  ): Promise<string[]> {
+    const results = await this.queryDocuments(query, topK, tenantId);
     return results.map((result) => result.text).filter(Boolean);
   }
 

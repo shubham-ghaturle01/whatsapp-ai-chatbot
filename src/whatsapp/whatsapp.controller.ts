@@ -1,12 +1,18 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
   HttpCode,
+  NotFoundException,
+  Param,
   Post,
   Query,
   Res,
+  Req,
+  UseGuards,
 } from '@nestjs/common';
+import { Types } from 'mongoose';
 
 import type { Response } from 'express';
 
@@ -15,6 +21,14 @@ import { ConversationsService } from '../conversations/conversations.service';
 import { UsersService } from '../users/users.service';
 import { WhatsappService } from './whatsapp.service';
 import { DocumentService } from './document.service';
+import { TenantsService } from '../tenants/tenants.service';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { AuthenticatedUser } from '../auth/auth.types';
+import { CreateMessageDto } from '../conversations/dto/create-message.dto';
+
+type AuthenticatedRequest = { user: AuthenticatedUser };
 
 @Controller('whatsapp')
 export class WhatsappController {
@@ -24,7 +38,44 @@ export class WhatsappController {
     private readonly usersService: UsersService,
     private readonly conversationsService: ConversationsService,
     private readonly documentService: DocumentService,
+    private readonly tenantsService: TenantsService,
   ) {}
+
+  @Post('conversations/:userId/messages')
+  @HttpCode(200)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPER_ADMIN', 'BUSINESS_ADMIN', 'BUSINESS_AGENT')
+  async sendConversationMessage(
+    @Param('userId') userId: string,
+    @Body() body: CreateMessageDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new NotFoundException('Conversation not found.');
+    }
+
+    const user = await this.conversationsService.findTenantUser(
+      request.user.tenantId,
+      new Types.ObjectId(userId),
+    );
+    if (!user) {
+      throw new NotFoundException('Conversation not found.');
+    }
+
+    const message = body.message.trim();
+    if (!message) {
+      throw new BadRequestException('Message cannot be empty.');
+    }
+
+    await this.whatsappService.sendText(user.phoneNumber, message);
+    const savedMessage = await this.conversationsService.addMessage(
+      request.user.tenantId,
+      user._id,
+      'assistant',
+      message,
+    );
+    return { status: 'sent', message: savedMessage };
+  }
 
   // ================================
   // WhatsApp Webhook Verification
@@ -85,6 +136,24 @@ export class WhatsappController {
       return { status: 'EVENT_RECEIVED' };
     }
 
+    const phoneNumberId =
+      value?.metadata?.phone_number_id ||
+      process.env.WHATSAPP_PHONE_NUMBER_ID;
+    let tenant = phoneNumberId
+      ? await this.tenantsService.resolveByPhoneNumberId(phoneNumberId)
+      : null;
+    if (
+      !tenant &&
+      phoneNumberId === process.env.WHATSAPP_PHONE_NUMBER_ID
+    ) {
+      tenant = await this.tenantsService.ensureDefaultTenant();
+    }
+    if (!tenant) {
+      console.error('Unknown or inactive WhatsApp phone number ID:', phoneNumberId);
+      return { status: 'EVENT_RECEIVED' };
+    }
+    const tenantId = tenant.tenantId;
+
     // Acknowledge Meta immediately; document parsing and AI work can take longer.
     if (res) {
       res.status(200).json({ status: 'EVENT_RECEIVED' });
@@ -124,10 +193,10 @@ export class WhatsappController {
     let userId;
     let conversationContext = '';
     try {
-      const user = await this.usersService.findOrCreate(from, contactName);
+      const user = await this.usersService.findOrCreate(tenantId, from, contactName);
       userId = user._id;
-      await this.conversationsService.addMessage(userId, 'user', userMessage);
-      const history = await this.conversationsService.getRecentMessages(userId);
+      await this.conversationsService.addMessage(tenantId, userId, 'user', userMessage);
+      const history = await this.conversationsService.getRecentMessages(tenantId, userId);
       conversationContext = history
         .map((item) => `${item.role}: ${item.message}`)
         .join('\n');
@@ -145,6 +214,7 @@ export class WhatsappController {
     try {
       if (isDocument) {
         await this.aiService.indexDocument(userMessage, {
+          tenantId,
           from,
           messageId,
           source: 'whatsapp-document',
@@ -154,6 +224,7 @@ export class WhatsappController {
       const relevantDocuments = await this.aiService.searchRelevantDocuments(
         userMessage,
         3,
+        tenantId,
       );
 
       const prompt = isDocument
@@ -167,7 +238,7 @@ export class WhatsappController {
 
       await this.whatsappService.sendText(from, aiResponse);
       if (userId) {
-        await this.conversationsService.addMessage(userId, 'assistant', aiResponse);
+        await this.conversationsService.addMessage(tenantId, userId, 'assistant', aiResponse);
       }
       console.log('SEND MESSAGE COMPLETE');
     } catch (error) {
