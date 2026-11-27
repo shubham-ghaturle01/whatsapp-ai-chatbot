@@ -7,6 +7,9 @@ import { WhatsappController } from './whatsapp.controller';
 import { WhatsappService } from './whatsapp.service';
 import { DocumentService } from './document.service';
 import { TenantsService } from '../tenants/tenants.service';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import type { Response } from 'express';
 
 describe('WhatsappController', () => {
   let controller: WhatsappController;
@@ -37,7 +40,11 @@ describe('WhatsappController', () => {
   };
 
   beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
+    jest.clearAllMocks();
+    tenantsService.resolveByPhoneNumberId.mockResolvedValue({
+      tenantId: 'tenant-test',
+    });
+    const builder = Test.createTestingModule({
       controllers: [WhatsappController],
       providers: [
         {
@@ -65,7 +72,14 @@ describe('WhatsappController', () => {
           useValue: tenantsService,
         },
       ],
-    }).compile();
+    });
+    builder
+      .overrideGuard(JwtAuthGuard)
+      .useValue({ canActivate: jest.fn().mockReturnValue(true) });
+    builder
+      .overrideGuard(RolesGuard)
+      .useValue({ canActivate: jest.fn().mockReturnValue(true) });
+    const module: TestingModule = await builder.compile();
 
     controller = module.get<WhatsappController>(WhatsappController);
   });
@@ -74,12 +88,78 @@ describe('WhatsappController', () => {
     expect(controller).toBeDefined();
   });
 
+  it('acknowledges webhook events that do not contain a message', async () => {
+    const response = {
+      status: jest.fn().mockReturnThis(),
+      json: jest.fn().mockReturnThis(),
+    } as unknown as Response;
+
+    await controller.receiveMessage({ entry: [] }, response);
+
+    expect(response.status).toHaveBeenCalledWith(200);
+    expect(response.json).toHaveBeenCalledWith({ status: 'EVENT_RECEIVED' });
+  });
+
+  it('processes a message when it follows a status-only webhook change', async () => {
+    aiService.askQuestion.mockResolvedValueOnce('Hello!');
+    aiService.searchRelevantDocuments.mockResolvedValueOnce([]);
+    usersService.findOrCreate.mockResolvedValueOnce({ _id: 'user-id' });
+    conversationsService.getRecentMessages.mockResolvedValueOnce([]);
+    const response = {
+      status: jest.fn().mockReturnThis(),
+      json: jest.fn().mockReturnThis(),
+    } as unknown as Response;
+
+    await controller.receiveMessage({
+      entry: [
+        {
+          changes: [
+            {
+              field: 'statuses',
+              value: { statuses: [] },
+            },
+            {
+              field: 'messages',
+              value: {
+                metadata: { phone_number_id: 'test-phone-id' },
+                messages: [
+                  {
+                    from: '919730327322',
+                    id: 'wamid.batched-test',
+                    type: 'text',
+                    text: { body: 'hi' },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    }, response);
+
+    expect(whatsappService.sendText).toHaveBeenCalledWith(
+      '919730327322',
+      'Hello!',
+    );
+    expect(response.json).toHaveBeenCalledWith({ status: 'EVENT_RECEIVED' });
+    expect(controller.getWebhookDiagnostics()).toMatchObject({
+      fields: ['statuses', 'messages'],
+      messageCount: 1,
+      readReceiptStatus: 'accepted',
+      replyStatus: 'sent',
+    });
+  });
+
   it('sends a reply even when marking the message as read fails', async () => {
     whatsappService.markAsRead.mockRejectedValueOnce(new Error('read failed'));
     aiService.askQuestion.mockResolvedValueOnce('GST is a goods and services tax.');
     aiService.searchRelevantDocuments.mockResolvedValueOnce([]);
     usersService.findOrCreate.mockResolvedValueOnce({ _id: 'user-id' });
     conversationsService.getRecentMessages.mockResolvedValueOnce([]);
+    const response = {
+      status: jest.fn().mockReturnThis(),
+      json: jest.fn().mockReturnThis(),
+    } as unknown as Response;
 
     await controller.receiveMessage({
       entry: [
@@ -103,9 +183,14 @@ describe('WhatsappController', () => {
           ],
         },
       ],
-    });
+    }, response);
 
+    expect(response.status).toHaveBeenCalledWith(200);
+    expect(response.json).toHaveBeenCalledWith({ status: 'EVENT_RECEIVED' });
     expect(whatsappService.markAsRead).toHaveBeenCalledWith('wamid.test');
+    expect(whatsappService.markAsRead.mock.invocationCallOrder[0]).toBeLessThan(
+      usersService.findOrCreate.mock.invocationCallOrder[0],
+    );
     expect(aiService.askQuestion).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({ context: undefined, documents: [] }),

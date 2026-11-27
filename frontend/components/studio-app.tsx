@@ -1435,6 +1435,185 @@ function WorkflowsPage({ notify }: { notify: (message: string) => void }) {
 }
 
 function IntegrationsPage({ notify }: { notify: (message: string) => void }) {
+  type WebhookDiagnostics = {
+    lastVerificationAt: string | null;
+    lastEventAt: string | null;
+    fields: string[];
+    messageCount: number;
+    lastMessageAt: string | null;
+    readReceiptStatus: 'not_attempted' | 'pending' | 'accepted' | 'failed';
+    replyStatus:
+      | 'not_attempted'
+      | 'pending'
+      | 'sent'
+      | 'fallback_sent'
+      | 'failed';
+    errors: string[];
+  };
+  type SubscriptionChecks = {
+    messagesField: boolean;
+    wabaApp: boolean;
+  };
+
+  const [whatsappStatus, setWhatsappStatus] = useState<{
+    configured: boolean;
+    apiConfigured: boolean;
+    webhookConfigured: boolean;
+    phoneNumberId: string | null;
+    graphApiVersion: string | null;
+  } | null>(null);
+  const [checkingConnection, setCheckingConnection] = useState(false);
+  const [connectionCheck, setConnectionCheck] = useState<{
+    status: string;
+    displayPhoneNumber: string | null;
+    verifiedName: string | null;
+    qualityRating: string | null;
+    checkedAt: string;
+  } | null>(null);
+  const [connectionError, setConnectionError] = useState('');
+  const [webhookDiagnostics, setWebhookDiagnostics] =
+    useState<WebhookDiagnostics | null>(null);
+  const [diagnosticsError, setDiagnosticsError] = useState('');
+  const [refreshingDiagnostics, setRefreshingDiagnostics] = useState(false);
+  const [publicApiOrigin, setPublicApiOrigin] = useState('');
+  const [wabaId, setWabaId] = useState('');
+  const [subscriptionChecks, setSubscriptionChecks] =
+    useState<SubscriptionChecks>({
+      messagesField: false,
+      wabaApp: false,
+    });
+
+  async function refreshWebhookDiagnostics() {
+    setRefreshingDiagnostics(true);
+    setDiagnosticsError('');
+    try {
+      const response = await apiRequest<WebhookDiagnostics>(
+        '/whatsapp/webhook/diagnostics',
+      );
+      setWebhookDiagnostics(response);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Could not load webhook diagnostics.';
+      setDiagnosticsError(message);
+      notify(message);
+    } finally {
+      setRefreshingDiagnostics(false);
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    try {
+      setPublicApiOrigin(
+        window.localStorage.getItem('whatsapp_public_api_origin') || '',
+      );
+      setWabaId(window.localStorage.getItem('whatsapp_waba_id') || '');
+      setSubscriptionChecks({
+        messagesField:
+          window.localStorage.getItem('whatsapp_messages_field_subscribed') ===
+          'true',
+        wabaApp:
+          window.localStorage.getItem('whatsapp_waba_app_subscribed') ===
+          'true',
+      });
+    } catch {
+      notify('Could not restore saved WhatsApp setup progress.');
+    }
+    apiRequest<NonNullable<typeof whatsappStatus>>('/whatsapp/status')
+      .then((response) => {
+        if (!cancelled) setWhatsappStatus(response);
+      })
+      .catch((error) =>
+        notify(error instanceof Error ? error.message : 'Could not load WhatsApp setup status.'),
+      );
+    apiRequest<WebhookDiagnostics>('/whatsapp/webhook/diagnostics')
+      .then((response) => {
+        if (!cancelled) setWebhookDiagnostics(response);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setDiagnosticsError(
+            error instanceof Error
+              ? error.message
+              : 'Could not load webhook diagnostics.',
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function checkWhatsappConnection() {
+    setCheckingConnection(true);
+    setConnectionError('');
+    setConnectionCheck(null);
+    try {
+      const response = await apiRequest<NonNullable<typeof connectionCheck>>(
+        '/whatsapp/check',
+        { method: 'POST' },
+      );
+      setConnectionCheck(response);
+      notify('WhatsApp connection verified.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'WhatsApp connection check failed.';
+      setConnectionError(message);
+      notify(message);
+    } finally {
+      setCheckingConnection(false);
+    }
+  }
+
+  const normalizedApiOrigin = publicApiOrigin
+    .trim()
+    .replace(/\/+$/, '')
+    .replace(/\/whatsapp\/webhook$/i, '');
+  let callbackUrl = '';
+  try {
+    const parsedOrigin = new URL(normalizedApiOrigin);
+    if (parsedOrigin.protocol === 'https:') {
+      callbackUrl = `${parsedOrigin.origin}/whatsapp/webhook`;
+    }
+  } catch {
+    callbackUrl = '';
+  }
+  const wabaSubscriptionPath = /^\d+$/.test(wabaId.trim())
+    ? `/${whatsappStatus?.graphApiVersion || 'v27.0'}/${wabaId.trim()}/subscribed_apps`
+    : '';
+  const backendReady = Boolean(
+    whatsappStatus?.apiConfigured && whatsappStatus.webhookConfigured,
+  );
+
+  function updateSubscriptionCheck(
+    key: keyof SubscriptionChecks,
+    checked: boolean,
+  ) {
+    const next = { ...subscriptionChecks, [key]: checked };
+    setSubscriptionChecks(next);
+    try {
+      window.localStorage.setItem(
+        key === 'messagesField'
+          ? 'whatsapp_messages_field_subscribed'
+          : 'whatsapp_waba_app_subscribed',
+        String(checked),
+      );
+    } catch {
+      notify('Could not save this setup step in this browser.');
+    }
+  }
+
+  async function copySetupValue(value: string, label: string) {
+    try {
+      await navigator.clipboard.writeText(value);
+      notify(`${label} copied.`);
+    } catch {
+      notify(`Could not copy ${label.toLowerCase()}. Select and copy it manually.`);
+    }
+  }
+
   const integrations = [
     {
       name: 'WhatsApp Business',
@@ -1489,14 +1668,6 @@ function IntegrationsPage({ notify }: { notify: (message: string) => void }) {
     <>
       <PageHeading
         section="integrations"
-        action={
-          <Button
-            variant="secondary"
-            onClick={() => notify('Integration catalog is being prepared.')}
-          >
-            <Blocks size={14} /> Browse integrations
-          </Button>
-        }
       />
       <PreviewBanner />
       <div className="panel" style={{ marginBottom: 16 }}>
@@ -1505,7 +1676,9 @@ function IntegrationsPage({ notify }: { notify: (message: string) => void }) {
             <h2>Messaging channel</h2>
             <p>Connect the channel your customers already use</p>
           </div>
-          <span className="status">1 connected</span>
+          <span className={`status ${whatsappStatus?.configured ? '' : 'draft'}`}>
+            {whatsappStatus?.configured ? 'Configured' : 'Setup required'}
+          </span>
         </div>
         <div
           className="integration-grid"
@@ -1522,24 +1695,40 @@ function IntegrationsPage({ notify }: { notify: (message: string) => void }) {
                   <span className={`integration-logo ${item.tone}`}>
                     <Icon size={20} />
                   </span>
-                  <span className="status">Connected</span>
+                  <span className={`status ${connectionCheck ? '' : 'draft'}`}>
+                    {connectionCheck ? 'Connected' : 'Not verified'}
+                  </span>
                 </div>
                 <h3>{item.name}</h3>
-                <p>{item.desc}</p>
+                <p>{item.desc} Credentials are kept in the backend environment and are never shown here.</p>
+                {whatsappStatus && (
+                  <div className="whatsapp-connection-details">
+                    <div><strong>Phone number ID</strong><span>{whatsappStatus.phoneNumberId || 'Missing'}</span></div>
+                    <div><strong>Graph API</strong><span>{whatsappStatus.graphApiVersion || 'Missing'}</span></div>
+                    <div><strong>Webhook verification</strong><span>{whatsappStatus.webhookConfigured ? 'Configured' : 'Missing verify token'}</span></div>
+                    {connectionCheck?.displayPhoneNumber && (
+                      <div><strong>Business number</strong><span>{connectionCheck.displayPhoneNumber}</span></div>
+                    )}
+                    {connectionCheck?.verifiedName && (
+                      <div><strong>Verified name</strong><span>{connectionCheck.verifiedName}</span></div>
+                    )}
+                    {connectionCheck?.qualityRating && (
+                      <div><strong>Quality rating</strong><span>{connectionCheck.qualityRating}</span></div>
+                    )}
+                  </div>
+                )}
+                {connectionError && <p className="integration-error" role="alert">{connectionError}</p>}
+                <div className="integration-setup-note">
+                  Follow the guided steps below to configure the callback, subscribe the app, and test incoming messages.
+                </div>
                 <div className="integration-card-footer">
-                  <span className="connection-state connected">
-                    Phone number connected
-                  </span>
                   <Button
                     variant="secondary"
                     size="small"
-                    onClick={() =>
-                      notify(
-                        'WhatsApp connection management will be connected in the integration phase.',
-                      )
-                    }
+                    disabled={checkingConnection || !whatsappStatus?.apiConfigured}
+                    onClick={() => void checkWhatsappConnection()}
                   >
-                    Manage
+                    {checkingConnection ? 'Checking...' : 'Check connection'}
                   </Button>
                 </div>
               </article>
@@ -1547,6 +1736,237 @@ function IntegrationsPage({ notify }: { notify: (message: string) => void }) {
           })}
         </div>
       </div>
+      <section className="panel whatsapp-setup-panel">
+        <div className="panel-heading">
+          <div>
+            <h2>WhatsApp setup in 4 steps</h2>
+            <p>Complete each step, then use the live check to find where delivery stops.</p>
+          </div>
+          <Button
+            variant="secondary"
+            size="small"
+            disabled={refreshingDiagnostics}
+            onClick={() => void refreshWebhookDiagnostics()}
+          >
+            {refreshingDiagnostics ? 'Checking...' : 'Refresh live check'}
+          </Button>
+        </div>
+
+        <div className="whatsapp-setup-steps">
+          <article className="whatsapp-setup-step">
+            <span className={`whatsapp-step-number ${backendReady ? 'complete' : ''}`}>
+              {backendReady ? <Check size={14} /> : '1'}
+            </span>
+            <div className="whatsapp-step-content">
+              <div className="whatsapp-step-title">
+                <h3>Check backend settings</h3>
+                <span className={`status ${backendReady ? '' : 'draft'}`}>
+                  {whatsappStatus ? (backendReady ? 'Ready' : 'Missing settings') : 'Checking'}
+                </span>
+              </div>
+              <p>
+                The API needs the phone number ID, access token, Graph API version, and webhook verify token. Secrets stay on the backend and are never shown here.
+              </p>
+              <div className="whatsapp-step-result">
+                API: {whatsappStatus?.apiConfigured ? 'configured' : 'not configured'} · Webhook token: {whatsappStatus?.webhookConfigured ? 'configured' : 'not configured'} · Phone Number ID: {whatsappStatus?.phoneNumberId || 'missing'}
+              </div>
+            </div>
+          </article>
+
+          <article className="whatsapp-setup-step">
+            <span className={`whatsapp-step-number ${webhookDiagnostics?.lastVerificationAt ? 'complete' : ''}`}>
+              {webhookDiagnostics?.lastVerificationAt ? <Check size={14} /> : '2'}
+            </span>
+            <div className="whatsapp-step-content">
+              <div className="whatsapp-step-title">
+                <h3>Set and verify the callback URL</h3>
+                <span className={`status ${webhookDiagnostics?.lastVerificationAt ? '' : 'draft'}`}>
+                  {webhookDiagnostics?.lastVerificationAt ? 'Verified' : 'Waiting for verification'}
+                </span>
+              </div>
+              <p>Paste your current public HTTPS API address (ngrok forwards to port 3000). We will add the webhook path for you.</p>
+              <label className="whatsapp-step-field">
+                <span>Public API URL</span>
+                <input
+                  type="url"
+                  placeholder="https://your-name.ngrok-free.app"
+                  value={publicApiOrigin}
+                  onChange={(event) => {
+                    setPublicApiOrigin(event.target.value);
+                    try {
+                      window.localStorage.setItem(
+                        'whatsapp_public_api_origin',
+                        event.target.value,
+                      );
+                    } catch {
+                      notify('Could not save the callback URL in this browser.');
+                    }
+                  }}
+                  aria-describedby="whatsapp-callback-url"
+                />
+              </label>
+              <div className="whatsapp-copy-row">
+                <code id="whatsapp-callback-url">
+                  {callbackUrl || 'Enter a valid HTTPS URL to generate the callback'}
+                </code>
+                <Button
+                  variant="secondary"
+                  size="small"
+                  disabled={!callbackUrl}
+                  onClick={() => void copySetupValue(callbackUrl, 'Callback URL')}
+                >
+                  Copy callback
+                </Button>
+              </div>
+              {webhookDiagnostics?.lastVerificationAt && (
+                <div className="whatsapp-step-result">
+                  Latest successful verification: {new Date(webhookDiagnostics.lastVerificationAt).toLocaleString()}
+                </div>
+              )}
+              <a
+                className="whatsapp-step-link"
+                href="https://developers.facebook.com/apps/"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Open Meta App Dashboard
+              </a>
+            </div>
+          </article>
+
+          <article className="whatsapp-setup-step">
+            <span className={`whatsapp-step-number ${subscriptionChecks.messagesField && subscriptionChecks.wabaApp ? 'complete' : ''}`}>
+              {subscriptionChecks.messagesField && subscriptionChecks.wabaApp ? <Check size={14} /> : '3'}
+            </span>
+            <div className="whatsapp-step-content">
+              <div className="whatsapp-step-title">
+                <h3>Subscribe Meta to messages</h3>
+                <span className={`status ${subscriptionChecks.messagesField && subscriptionChecks.wabaApp ? '' : 'draft'}`}>
+                  {subscriptionChecks.messagesField && subscriptionChecks.wabaApp ? 'Marked complete' : 'Two checks'}
+                </span>
+              </div>
+              <p>In Meta, subscribe the <code>messages</code> webhook field, then subscribe this app to your WhatsApp Business Account (WABA).</p>
+              <label className="whatsapp-step-check">
+                <input
+                  type="checkbox"
+                  checked={subscriptionChecks.messagesField}
+                  onChange={(event) =>
+                    updateSubscriptionCheck('messagesField', event.target.checked)
+                  }
+                />
+                <span>I subscribed to the <code>messages</code> field in Webhooks.</span>
+              </label>
+              <label className="whatsapp-step-field">
+                <span>WhatsApp Business Account ID (WABA ID)</span>
+                <input
+                  inputMode="numeric"
+                  value={wabaId}
+                  placeholder="Enter your WABA ID"
+                  onChange={(event) => {
+                    setWabaId(event.target.value);
+                    try {
+                      window.localStorage.setItem('whatsapp_waba_id', event.target.value);
+                    } catch {
+                      notify('Could not save the WABA ID in this browser.');
+                    }
+                  }}
+                />
+              </label>
+              <div className="whatsapp-copy-row">
+                <code>{wabaSubscriptionPath || 'Enter a numeric WABA ID to generate the API path'}</code>
+                <Button
+                  variant="secondary"
+                  size="small"
+                  disabled={!wabaSubscriptionPath}
+                  onClick={() => void copySetupValue(wabaSubscriptionPath, 'WABA subscription path')}
+                >
+                  Copy API path
+                </Button>
+              </div>
+              <p className="whatsapp-step-hint">
+                Use the WABA ID from <code>entry[0].id</code> in Meta’s webhook payload. It is not the display phone number or <code>value.metadata.phone_number_id</code>. In Graph API Explorer, choose your app and a token with <code>whatsapp_business_management</code>, set the request to POST, and submit this path. Never paste the token into this app or chat.
+              </p>
+              {wabaId.trim() &&
+                whatsappStatus?.phoneNumberId === wabaId.trim() && (
+                  <p className="integration-error" role="alert">
+                    The backend Phone Number ID matches the WABA ID. These must be different: set WHATSAPP_PHONE_NUMBER_ID to the ID from value.metadata.phone_number_id, then restart the backend.
+                  </p>
+                )}
+              <label className="whatsapp-step-check">
+                <input
+                  type="checkbox"
+                  checked={subscriptionChecks.wabaApp}
+                  onChange={(event) =>
+                    updateSubscriptionCheck('wabaApp', event.target.checked)
+                  }
+                />
+                <span>Graph API returned success for the WABA app subscription.</span>
+              </label>
+              <a
+                className="whatsapp-step-link"
+                href="https://developers.facebook.com/tools/explorer/"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Open Graph API Explorer
+              </a>
+            </div>
+          </article>
+
+          <article className="whatsapp-setup-step">
+            <span className={`whatsapp-step-number ${webhookDiagnostics?.messageCount ? 'complete' : ''}`}>
+              {webhookDiagnostics?.messageCount ? <Check size={14} /> : '4'}
+            </span>
+            <div className="whatsapp-step-content">
+              <div className="whatsapp-step-title">
+                <h3>Send a real incoming test</h3>
+                <Button
+                  variant="secondary"
+                  size="small"
+                  disabled={refreshingDiagnostics}
+                  onClick={() => void refreshWebhookDiagnostics()}
+                >
+                  {refreshingDiagnostics ? 'Checking...' : 'Check now'}
+                </Button>
+              </div>
+              <p>From your personal WhatsApp, send “hi” to the business test number. Do not use Meta’s outbound template action for this check.</p>
+              {diagnosticsError && (
+                <p className="integration-error" role="alert">{diagnosticsError}</p>
+              )}
+              {webhookDiagnostics ? (
+                <>
+                  <div className="whatsapp-diagnostics-grid">
+                    <div><strong>Last callback</strong><span>{webhookDiagnostics.lastEventAt ? new Date(webhookDiagnostics.lastEventAt).toLocaleString() : 'Not received since API start'}</span></div>
+                    <div><strong>Webhook fields</strong><span>{webhookDiagnostics.fields.join(', ') || 'None'}</span></div>
+                    <div><strong>Messages in last event</strong><span>{webhookDiagnostics.messageCount}</span></div>
+                    <div><strong>Read receipt</strong><span>{webhookDiagnostics.readReceiptStatus.replaceAll('_', ' ')}</span></div>
+                    <div><strong>Reply</strong><span>{webhookDiagnostics.replyStatus.replaceAll('_', ' ')}</span></div>
+                  </div>
+                  {webhookDiagnostics.messageCount === 0 && webhookDiagnostics.lastEventAt && (
+                    <div className="whatsapp-step-hint">
+                      The callback arrived, but it did not contain an incoming message. Send a new message from the recipient phone.
+                    </div>
+                  )}
+                  {webhookDiagnostics.errors.length > 0 && (
+                    <ul className="whatsapp-diagnostics-errors" role="alert">
+                      {webhookDiagnostics.errors.map((error, index) => (
+                        <li key={`${index}-${error}`}>{error}</li>
+                      ))}
+                    </ul>
+                  )}
+                </>
+              ) : (
+                <div className="whatsapp-step-result">
+                  {refreshingDiagnostics ? 'Loading live webhook status…' : 'No webhook diagnostics available yet.'}
+                </div>
+              )}
+              <div className="whatsapp-step-hint">
+                “Read receipt accepted” means Meta accepted the read request. “Reply sent” means Meta accepted the reply request.
+              </div>
+            </div>
+          </article>
+        </div>
+      </section>
       <section className="panel">
         <div className="panel-heading">
           <div>

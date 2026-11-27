@@ -68,7 +68,12 @@
 //     }
 //   }
 // }
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  BadGatewayException,
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 
@@ -78,6 +83,77 @@ export class WhatsappService {
   private readonly maxTextLength = 4096;
 
   constructor(private readonly configService: ConfigService) {}
+
+  getConnectionStatus() {
+    const phoneNumberId =
+      this.configService.get<string>('WHATSAPP_PHONE_NUMBER_ID')?.trim() || '';
+    const accessToken =
+      this.configService.get<string>('WHATSAPP_ACCESS_TOKEN')?.trim() || '';
+    const graphApiVersion =
+      this.configService.get<string>('GRAPH_API_VERSION')?.trim() || '';
+    const verifyToken =
+      this.configService.get<string>('WHATSAPP_VERIFY_TOKEN')?.trim() || '';
+    const apiConfigured = Boolean(phoneNumberId && accessToken && graphApiVersion);
+
+    return {
+      configured: apiConfigured && Boolean(verifyToken),
+      apiConfigured,
+      webhookConfigured: Boolean(verifyToken),
+      phoneNumberId: phoneNumberId || null,
+      graphApiVersion: graphApiVersion || null,
+    };
+  }
+
+  async checkConnection() {
+    const status = this.getConnectionStatus();
+    const accessToken =
+      this.configService.get<string>('WHATSAPP_ACCESS_TOKEN')?.trim() || '';
+    if (
+      !status.apiConfigured ||
+      !status.phoneNumberId ||
+      !status.graphApiVersion ||
+      !accessToken
+    ) {
+      throw new ServiceUnavailableException(
+        'WhatsApp API settings are incomplete. Configure the phone number ID, access token, and Graph API version.',
+      );
+    }
+
+    try {
+      const response = await axios.get<{
+        display_phone_number?: string;
+        verified_name?: string;
+        quality_rating?: string;
+      }>(
+        `https://graph.facebook.com/${status.graphApiVersion}/${status.phoneNumberId}`,
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          params: {
+            fields: 'display_phone_number,verified_name,quality_rating',
+          },
+          timeout: 10000,
+        },
+      );
+      return {
+        status: 'connected',
+        displayPhoneNumber: response.data.display_phone_number || null,
+        verifiedName: response.data.verified_name || null,
+        qualityRating: response.data.quality_rating || null,
+        checkedAt: new Date().toISOString(),
+      };
+    } catch (error: unknown) {
+      const httpStatus = axios.isAxiosError(error)
+        ? error.response?.status
+        : undefined;
+      this.logger.error('WhatsApp connection check failed', {
+        status: httpStatus,
+        message: error instanceof Error ? error.message : 'Unknown error',
+      });
+      throw new BadGatewayException(
+        `WhatsApp connection check failed${httpStatus ? ` (HTTP ${httpStatus})` : ''}. Verify the server-side WhatsApp credentials.`,
+      );
+    }
+  }
 
   private get apiConfig() {
     const phoneNumberId = this.configService.getOrThrow<string>(
@@ -116,18 +192,9 @@ export class WhatsappService {
   }
 
   async markAsRead(messageId: string) {
-
-    const { url, headers, graphApiVersion, phoneNumberId } = this.apiConfig;
-
-    this.logger.log('MARK READ START');
-    this.logger.log(`MESSAGE ID: ${messageId}`);
-    this.logger.log(`PHONE NUMBER ID: ${phoneNumberId}`);
-    this.logger.log(`GRAPH API VERSION: ${graphApiVersion}`);
-    this.logger.log(`ACCESS TOKEN EXISTS: ${Boolean(headers.Authorization)}`);
-    this.logger.log(`OUTGOING URL: ${url}`);
+    const { url, headers } = this.apiConfig;
 
     try {
-
       const response = await axios.post(
         url,
         {
@@ -139,31 +206,18 @@ export class WhatsappService {
           headers,
         },
       );
-
-      this.logger.log(`MARK READ RESPONSE: ${JSON.stringify(response.data)}`);
+      this.logger.log('WhatsApp read receipt accepted by Graph API');
       return response.data;
-
     } catch (error: any) {
-
       this.logApiError('MARK READ', error);
       throw error;
     }
   }
 
   async sendText(to: string, text: string) {
-
-    const { url, headers, graphApiVersion, phoneNumberId } = this.apiConfig;
-
-    this.logger.log('SEND MESSAGE START');
-    this.logger.log(`TO: ${to}`);
-    this.logger.log(`TEXT: ${text}`);
-    this.logger.log(`PHONE NUMBER ID: ${phoneNumberId}`);
-    this.logger.log(`GRAPH API VERSION: ${graphApiVersion}`);
-    this.logger.log(`ACCESS TOKEN EXISTS: ${Boolean(headers.Authorization)}`);
-    this.logger.log(`OUTGOING URL: ${url}`);
+    const { url, headers } = this.apiConfig;
 
     try {
-
       const chunks = this.splitText(text);
       const responses: unknown[] = [];
       for (const chunk of chunks) {
@@ -183,12 +237,9 @@ export class WhatsappService {
         );
         responses.push(response.data);
       }
-
-      this.logger.log(`SEND MESSAGE RESPONSE: ${JSON.stringify(responses)}`);
+      this.logger.log(`WhatsApp reply accepted by Graph API (${chunks.length} chunk(s))`);
       return responses.length === 1 ? responses[0] : responses;
-
     } catch (error: any) {
-
       this.logApiError('SEND MESSAGE', error);
       throw error;
     }
